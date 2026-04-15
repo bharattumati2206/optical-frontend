@@ -34,10 +34,16 @@ import {
   createEmptyInvoiceItem,
 } from "../utils/invoice";
 
+function getTodayDateValue() {
+  const now = new Date();
+  const timezoneOffsetMs = now.getTimezoneOffset() * 60 * 1000;
+  return new Date(now.getTime() - timezoneOffsetMs).toISOString().slice(0, 10);
+}
+
 export default function OrderCreatePage() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { selectedStore } = useStore();
+  const { selectedStore, isSuperAdmin } = useStore();
 
   const [selectedCustomer, setSelectedCustomer] = useState(null);
   const [latestPrescription, setLatestPrescription] = useState(null);
@@ -58,6 +64,7 @@ export default function OrderCreatePage() {
   const [itemErrors, setItemErrors] = useState({});
   const [customerError, setCustomerError] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [orderDate, setOrderDate] = useState(getTodayDateValue());
 
   const scrollToElement = (elementId, { focusId, offset = 92 } = {}) => {
     const target = globalThis?.document?.getElementById(elementId);
@@ -359,6 +366,7 @@ export default function OrderCreatePage() {
         storeId: selectedStore.id,
         customerId: selectedCustomer.id,
         prescriptionId,
+        ...(isSuperAdmin ? { orderDate } : {}),
         discount: totals.discount,
         gst: totals.gstAmount,
         advanceAmount: totals.advance,
@@ -664,6 +672,28 @@ export default function OrderCreatePage() {
                       <MenuItem value="UPI">UPI</MenuItem>
                       <MenuItem value="BANK_TRANSFER">Bank Transfer</MenuItem>
                     </TextField>
+
+                    {isSuperAdmin && (
+                      <TextField
+                        fullWidth
+                        size="small"
+                        type="date"
+                        label="Order Date"
+                        value={orderDate}
+                        onChange={(event) => setOrderDate(event.target.value)}
+                        slotProps={{
+                          inputLabel: {
+                            shrink: true,
+                          },
+                        }}
+                        sx={{
+                          "& .MuiOutlinedInput-root": {
+                            borderRadius: 1.6,
+                            backgroundColor: "#FFFFFF",
+                          },
+                        }}
+                      />
+                    )}
 
                     <Divider sx={{ borderColor: "#E3E8F3" }} />
 
