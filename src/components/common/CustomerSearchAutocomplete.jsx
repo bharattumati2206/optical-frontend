@@ -15,17 +15,12 @@ function buildSearchParams(rawQuery) {
   }
 
   const isDigitsOnly = /^\d+$/.test(query);
-  const isLettersOnly = /^[A-Za-z\s]+$/.test(query);
 
   if (isDigitsOnly) {
-    return { phone: query };
+    return { phone: query }; // Search by phone if input is digits only
   }
 
-  if (isLettersOnly) {
-    return { name: query };
-  }
-
-  return { name: query, phone: query };
+  return { name: query }; // Otherwise, search by name
 }
 
 function mapCustomerOptions(payload) {
@@ -62,6 +57,11 @@ export default function CustomerSearchAutocomplete({
   useEffect(() => {
     const query = inputValue.trim();
 
+    // Prevent unnecessary API call if inputValue matches the selected customer's display value
+    if (value && query === [value.name, value.phone].filter(Boolean).join(" - ")) {
+      return;
+    }
+
     if (query.length < MIN_QUERY_LENGTH) {
       setOptions([]);
       setLoading(false);
@@ -94,7 +94,7 @@ export default function CustomerSearchAutocomplete({
     return () => {
       clearTimeout(timerId);
     };
-  }, [debounceMs, inputValue]);
+  }, [debounceMs, inputValue, value]); // Added 'value' as a dependency
 
   return (
     <Autocomplete

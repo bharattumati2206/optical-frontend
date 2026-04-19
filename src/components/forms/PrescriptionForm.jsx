@@ -11,7 +11,7 @@ const EYE_ROWS = [
       { name: 'rightEyeSph', placeholder: 'SPH' },
       { name: 'rightEyeCyl', placeholder: 'CYL' },
       { name: 'rightEyeAxis', placeholder: 'AXIS' },
-      { name: 'additionPower', placeholder: 'ADD' },
+      { name: 'rightEyeAdd', placeholder: 'ADD' },
     ],
   },
   {
@@ -21,7 +21,7 @@ const EYE_ROWS = [
       { name: 'leftEyeSph', placeholder: 'SPH' },
       { name: 'leftEyeCyl', placeholder: 'CYL' },
       { name: 'leftEyeAxis', placeholder: 'AXIS' },
-      { name: 'additionPower', placeholder: 'ADD' },
+      { name: 'leftEyeAdd', placeholder: 'ADD' },
     ],
   },
 ]
@@ -222,7 +222,9 @@ PrescriptionField.propTypes = {
 PrescriptionForm.propTypes = {
   onChange: PropTypes.func.isRequired,
   value: PropTypes.shape({
-    additionPower: PropTypes.oneOfType([PropTypes.string, PropTypes.number]).isRequired,
+    additionPower: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
+    rightEyeAdd: PropTypes.oneOfType([PropTypes.string, PropTypes.number]).isRequired,
+    leftEyeAdd: PropTypes.oneOfType([PropTypes.string, PropTypes.number]).isRequired,
     leftEyeAxis: PropTypes.oneOfType([PropTypes.string, PropTypes.number]).isRequired,
     leftEyeCyl: PropTypes.oneOfType([PropTypes.string, PropTypes.number]).isRequired,
     leftEyeSph: PropTypes.oneOfType([PropTypes.string, PropTypes.number]).isRequired,

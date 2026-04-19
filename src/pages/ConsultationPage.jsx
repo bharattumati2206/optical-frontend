@@ -27,6 +27,7 @@ import {
   TableRow,
   TextField,
   Typography,
+  Autocomplete,
 } from "@mui/material";
 import PersonRoundedIcon from "@mui/icons-material/PersonRounded";
 import LocalHospitalRoundedIcon from "@mui/icons-material/LocalHospitalRounded";
@@ -34,20 +35,12 @@ import PageHeader from "../components/common/PageHeader";
 import ConsultationPreviewCard from "../components/common/ConsultationPreviewCard";
 import CustomerSearchAutocomplete from "../components/common/CustomerSearchAutocomplete";
 import { consultationService } from "../services/consultationService";
+import apiClient from "../services/apiClient";
+import { CONSULTATION_TYPES } from "../constants/consultationTypes";
 import { getListData } from "../utils/api";
 import { useStore } from "../context/useStore";
 
 const PAYMENT_MODES = ["CASH", "UPI", "CARD"];
-const FREE_WINDOW_DAYS = 15;
-const FEE_OPTIONS = [
-  { label: "Comprehensive Consultation", value: 500 },
-  { label: "Pediatric consultation", value: 750 },
-  { label: "Speciality Consultation", value: 1000 },
-  { label: "Foreign Body removal", value: 300 },
-  { label: "Diagnostic - each eye", value: 1250 },
-  { label: "Surgical Profile", value: 2500 },
-  { label: "Others - custom amount", value: "CUSTOM" },
-];
 
 function formatDate(value) {
   if (!value) {
@@ -89,13 +82,11 @@ function mapConsultations(payload) {
   return getListData(payload)
     .map((item, index) => ({
       id: item.id || index,
-      consultationDate: item.consultationDate || item.createdAt || item.date || "",
-      customerName: item.customerName || item.customer?.name || "-",
-      consultationFee: item.consultationFee ?? item.fee ?? 0,
-      paymentMode: item.paymentMode ?? null,
+      consultationDate: item.consultationDate || item.createdAt || "",
+      customerName: item.customer?.name || item.customerName || "-",
+      consultationFee: item.consultationFee ?? 0,
+      paymentMode: item.paymentMode || "-",
       paymentStatus: item.paymentStatus || "-",
-      visitType: item.visitType || "-",
-      isFreeFollowup: Boolean(item.isFreeFollowup),
     }))
     .sort((a, b) => new Date(b.consultationDate).getTime() - new Date(a.consultationDate).getTime());
 }
@@ -186,34 +177,55 @@ function getPreviewEffectiveFee(isFreeFlow, feeOption, customFee) {
   return Number(feeOption || FEE_OPTIONS[0].value);
 }
 
+
 export default function ConsultationPage() {
-  const feeInputRef = useRef(null);
   const { selectedStore, isSuperAdmin, loadingStores } = useStore();
 
+  // State for new case-based logic
   const [selectedCustomer, setSelectedCustomer] = useState(null);
-  const [selectedCustomerId, setSelectedCustomerId] = useState("");
-
-  const [historyRows, setHistoryRows] = useState([]);
-  const [historyLoading, setHistoryLoading] = useState(false);
-  const [historyError, setHistoryError] = useState("");
-
-  const [consultationPreview, setConsultationPreview] = useState(null);
-
-  const [feeOption, setFeeOption] = useState("");
-  const [customFee, setCustomFee] = useState("");
+  const [consultationType, setConsultationType] = useState(null);
+  const [caseData, setCaseData] = useState(null);
+  const [fee, setFee] = useState(0);
   const [paymentMode, setPaymentMode] = useState("CASH");
   const [saving, setSaving] = useState(false);
 
+  // Other state
   const [consultations, setConsultations] = useState([]);
   const [listLoading, setListLoading] = useState(true);
   const [listError, setListError] = useState("");
   const [flowFilter, setFlowFilter] = useState("ALL");
-
   const [snackbar, setSnackbar] = useState({
     open: false,
     severity: "success",
     message: "",
   });
+  const [consultationDate, setConsultationDate] = useState(new Date().toISOString().split('T')[0]);
+
+  // (history panel state removed, not needed for new case-based UI)
+  // Fetch case details when customer or type changes
+  useEffect(() => {
+    const fetchCaseDetails = async () => {
+      if (!selectedCustomer || !consultationType) {
+        setCaseData(null);
+        setFee(0);
+        return;
+      }
+      try {
+        const res = await apiClient.get("/consultations/check-case", {
+          params: {
+            customerId: selectedCustomer.id,
+            type: consultationType.value,
+          },
+        });
+        setCaseData(res.data);
+        setFee(res.data.fee);
+      } catch (err) {
+        setCaseData(null);
+        setFee(0);
+      }
+    };
+    fetchCaseDetails();
+  }, [selectedCustomer, consultationType]);
 
   useEffect(() => {
     if (isSuperAdmin && loadingStores) {
@@ -252,90 +264,8 @@ export default function ConsultationPage() {
     };
   }, [isSuperAdmin, loadingStores, selectedStore?.id]);
 
-  useEffect(() => {
-    if (!selectedCustomerId) {
-      setHistoryRows([]);
-      setConsultationPreview(null);
-      setHistoryError("");
-      setFeeOption("");
-      setCustomFee("");
-      setPaymentMode("CASH");
-      return;
-    }
 
-    let active = true;
-    setHistoryLoading(true);
-    setHistoryError("");
-
-    consultationService
-      .getConsultationsByCustomer(selectedCustomerId)
-      .then((data) => {
-        if (!active) {
-          return;
-        }
-
-        const rows = mapConsultations(data);
-        const preview = buildPreview(rows);
-
-        setHistoryRows(rows);
-        setConsultationPreview(preview);
-
-        setFeeOption("");
-        setCustomFee("");
-        setPaymentMode("CASH");
-      })
-      .catch((err) => {
-        if (!active) {
-          return;
-        }
-
-        setHistoryRows([]);
-        setConsultationPreview({
-          ...buildPreview([]),
-          message: "Unable to evaluate follow-up from history. Treating as paid by default.",
-        });
-        setHistoryError(getFriendlyApiError(err, "Unable to load customer consultation history."));
-      })
-      .finally(() => {
-        if (active) {
-          setHistoryLoading(false);
-        }
-      });
-
-    return () => {
-      active = false;
-    };
-  }, [selectedCustomerId, selectedStore?.id]);
-
-  useEffect(() => {
-    if (feeOption === "CUSTOM") {
-      setTimeout(() => {
-        feeInputRef.current?.focus();
-      }, 60);
-    }
-  }, [feeOption]);
-
-  const isFreeFlow = Boolean(consultationPreview?.isFreeFlow);
-  const storeReady = !isSuperAdmin || Boolean(selectedStore?.id);
-
-  const selectedFee = feeOption === "CUSTOM" ? Number(customFee) : Number(feeOption || 0);
-
-  const previewEffectiveFee = getPreviewEffectiveFee(
-    Boolean(consultationPreview?.isFreeFlow),
-    feeOption,
-    customFee,
-  );
-
-  const previewToRender = consultationPreview
-    ? { ...consultationPreview, effectiveFee: previewEffectiveFee }
-    : null;
-
-  const canSubmit =
-    Boolean(selectedCustomerId) &&
-    storeReady &&
-    !historyLoading &&
-    !saving &&
-    (isFreeFlow || (Boolean(feeOption) && Number.isFinite(selectedFee) && selectedFee > 0 && Boolean(paymentMode)));
+  // Legacy selectedCustomerId and related logic removed (now handled by selectedCustomer)
 
   const filteredConsultations = useMemo(() => {
     if (flowFilter === "FREE") {
@@ -347,50 +277,8 @@ export default function ConsultationPage() {
     return consultations;
   }, [consultations, flowFilter]);
 
-  let historyPanelContent = null;
-  if (historyLoading) {
-    historyPanelContent = (
-      <Stack direction="row" spacing={1} alignItems="center">
-        <CircularProgress size={16} />
-        <Typography variant="caption">Loading history...</Typography>
-      </Stack>
-    );
-  } else if (historyRows.length === 0) {
-    historyPanelContent = (
-      <Typography variant="caption" color="text.secondary">
-        No previous consultations found.
-      </Typography>
-    );
-  } else {
-    historyPanelContent = (
-      <>
-        <Typography variant="caption" color="text.secondary">
-          Last consultation on {formatDate(historyRows[0]?.consultationDate)}
-        </Typography>
-        <Typography variant="caption" color="text.secondary">
-          Free follow-up valid until {formatDate(addDays(new Date(historyRows[0]?.consultationDate), FREE_WINDOW_DAYS))}
-        </Typography>
-        {historyRows.slice(0, 3).map((row) => (
-          <Stack
-            key={row.id}
-            direction="row"
-            justifyContent="space-between"
-            alignItems="center"
-            sx={{ borderTop: "1px solid", borderColor: "divider", pt: 0.8 }}
-          >
-            <Typography variant="caption">{formatDate(row.consultationDate)}</Typography>
-            <Typography variant="caption">{row.visitType}</Typography>
-            <Typography variant="caption">Rs {row.consultationFee}</Typography>
-            <Chip
-              size="small"
-              label={row.isFreeFollowup ? "Free Follow-up" : "Paid"}
-              color={row.isFreeFollowup ? "success" : "default"}
-            />
-          </Stack>
-        ))}
-      </>
-    );
-  }
+
+  // (historyPanelContent removed, not needed for new case-based UI)
 
   async function refreshConsultations() {
     const params = {};
@@ -402,7 +290,8 @@ export default function ConsultationPage() {
   }
 
   async function handleSubmit() {
-    if (!canSubmit) {
+    // Inline button disables, so no canSubmit needed
+    if (!selectedCustomer || !consultationType || saving || (fee > 0 && !paymentMode)) {
       return;
     }
 
@@ -410,15 +299,17 @@ export default function ConsultationPage() {
 
     try {
       const payload = {
-        customerId: selectedCustomerId,
-        consultationFee: isFreeFlow ? 0 : selectedFee,
+        customerId: selectedCustomer?.id,
+        consultationType: consultationType?.value,
+        consultationFee: fee,
+        consultationDate,
       };
 
       if (isSuperAdmin && selectedStore?.id) {
         payload.storeId = selectedStore.id;
       }
 
-      if (!isFreeFlow) {
+      if (fee > 0) {
         payload.paymentMode = paymentMode;
       }
 
@@ -442,13 +333,10 @@ export default function ConsultationPage() {
         message: savedSummary,
       });
 
-      setSelectedCustomerId("");
       setSelectedCustomer(null);
-      setHistoryRows([]);
-      setConsultationPreview(null);
-      setHistoryError("");
-      setFeeOption("");
-      setCustomFee("");
+      setConsultationType(null);
+      setCaseData(null);
+      setFee(0);
       setPaymentMode("CASH");
     } catch (err) {
       setSnackbar({
@@ -465,132 +353,109 @@ export default function ConsultationPage() {
     <Stack spacing={3}>
       <PageHeader title="Consultations" subtitle="Clinic consultation billing" />
 
+      {/* --- New UI: Consultation Type Selection and Case Status --- */}
       <Stack direction={{ xs: "column", md: "row" }} spacing={2} alignItems="flex-start">
         <Card variant="outlined" sx={{ flex: 1, minWidth: 0 }}>
           <CardContent>
-            <Stack spacing={1.5}>
-              <Stack direction="row" spacing={1} alignItems="center">
-                <PersonRoundedIcon color="primary" fontSize="small" />
-                <Typography variant="subtitle1" fontWeight={600}>
-                  Select Customer
-                </Typography>
-              </Stack>
-
+            <Stack spacing={2}>
+              {/* Consultation Type Selection */}
+              <Autocomplete
+                options={CONSULTATION_TYPES}
+                getOptionLabel={(option) => option.label}
+                value={consultationType}
+                onChange={(_, value) => setConsultationType(value)}
+                renderInput={(params) => (
+                  <TextField {...params} label="Consultation Type" required fullWidth />
+                )}
+                sx={{ mb: 2 }}
+                disableClearable
+              />
+              {/* Customer Selection */}
               <CustomerSearchAutocomplete
                 value={selectedCustomer}
-                onChange={(customer) => {
-                  setSelectedCustomer(customer);
-                  setSelectedCustomerId(customer?.id || "");
-                }}
+                onChange={(customer) => setSelectedCustomer(customer)}
                 label="Customer"
                 placeholder="Search by name or phone"
               />
-
-              {selectedCustomer ? (
-                <Box
+              {isSuperAdmin && (
+                <TextField
+                  label="Consultation Date"
+                  type="date"
+                  value={consultationDate}
+                  onChange={(event) => setConsultationDate(event.target.value)}
+                  InputLabelProps={{ shrink: true }}
+                  fullWidth
                   sx={{
-                    bgcolor: "primary.50",
-                    border: "1px solid",
-                    borderColor: "primary.200",
-                    borderRadius: 1.5,
-                    px: 1.5,
-                    py: 1,
+                    '& .MuiOutlinedInput-root': {
+                      borderRadius: 1.5,
+                      backgroundColor: '#fff',
+                    },
                   }}
-                >
-                  <Typography variant="body2" fontWeight={600}>
-                    {selectedCustomer.name}
-                  </Typography>
-                  <Typography variant="caption" color="text.secondary">
-                    {selectedCustomer.phone}
-                  </Typography>
+                />
+              )}
+              {/* Customer Info */}
+              {selectedCustomer ? (
+                <Box sx={{ bgcolor: "primary.50", border: "1px solid", borderColor: "primary.200", borderRadius: 1.5, px: 1.5, py: 1 }}>
+                  <Typography variant="body2" fontWeight={600}>{selectedCustomer.name}</Typography>
+                  <Typography variant="caption" color="text.secondary">{selectedCustomer.phone}</Typography>
                 </Box>
               ) : null}
-
-              {historyError ? <Alert severity="warning">{historyError}</Alert> : null}
-
-              {selectedCustomerId ? (
-                <Card variant="outlined">
-                  <CardContent sx={{ py: 1.5 }}>
-                    <Stack spacing={1}>
-                      <Typography variant="subtitle2" fontWeight={600}>
-                        Customer Consultation History
-                      </Typography>
-                      {historyPanelContent}
-                    </Stack>
+              {/* Case Status Card */}
+              {consultationType && selectedCustomer && (
+                <Card variant="outlined" sx={{ mt: 2, mb: 1 }}>
+                  <CardContent>
+                    {caseData ? (
+                      <Stack spacing={0.5}>
+                        {caseData.caseStatus === "ACTIVE" && (
+                          <>
+                            <Typography color="success.main" fontWeight={600}>Follow-up Case Active</Typography>
+                            <Typography variant="body2">Last Visit: {formatDate(caseData.lastVisitDate)}</Typography>
+                            <Typography variant="body2">Valid Till: {formatDate(caseData.validTill)}</Typography>
+                            <Typography variant="body2">Days Remaining: {caseData.daysRemaining}</Typography>
+                            <Typography variant="body2">Fee: FREE</Typography>
+                          </>
+                        )}
+                        {caseData.caseStatus === "EXPIRED" && (
+                          <>
+                            <Typography color="error.main" fontWeight={600}>Previous Case Expired</Typography>
+                            <Typography variant="body2">Last Visit: {formatDate(caseData.lastVisitDate)}</Typography>
+                            <Typography variant="body2">Expired On: {formatDate(caseData.validTill)}</Typography>
+                            <Typography variant="body2">New Consultation Required</Typography>
+                            <Typography variant="body2">Fee: ₹{caseData.fee}</Typography>
+                          </>
+                        )}
+                        {caseData.caseStatus === "NEW" && (
+                          <>
+                            <Typography color="warning.main" fontWeight={600}>New Consultation</Typography>
+                            <Typography variant="body2">No previous case found</Typography>
+                            <Typography variant="body2">Fee: ₹{caseData.fee}</Typography>
+                          </>
+                        )}
+                      </Stack>
+                    ) : (
+                      <Typography variant="body2" color="text.secondary">Checking case status...</Typography>
+                    )}
                   </CardContent>
                 </Card>
-              ) : null}
+              )}
             </Stack>
           </CardContent>
         </Card>
-
+        {/* Billing & Payment Section */}
         <Card variant="outlined" sx={{ flex: 1, minWidth: 0 }}>
           <CardContent>
             <Stack spacing={2}>
               <Stack direction="row" spacing={1} alignItems="center">
                 <LocalHospitalRoundedIcon color="primary" fontSize="small" />
-                <Typography variant="subtitle1" fontWeight={600}>
-                  Consultation Billing
-                </Typography>
+                <Typography variant="subtitle1" fontWeight={600}>Consultation Billing</Typography>
               </Stack>
-
-              <ConsultationPreviewCard loading={historyLoading} preview={selectedCustomerId ? previewToRender : null} />
-
-              {isFreeFlow ? (
-                <TextField
-                  label="Consultation Fee"
-                  type="number"
-                  size="small"
-                  value="0"
-                  disabled
-                  slotProps={{
-                    input: {
-                      startAdornment: <InputAdornment position="start">Rs</InputAdornment>,
-                      readOnly: true,
-                    },
-                  }}
-                />
-              ) : (
-                <FormControl size="small" fullWidth>
-                  <InputLabel>Consultation Type</InputLabel>
-                  <Select
-                    value={feeOption}
-                    label="Consultation Type"
-                    onChange={(event) => {
-                      setFeeOption(event.target.value);
-                      if (event.target.value !== "CUSTOM") {
-                        setCustomFee("");
-                      }
-                    }}
-                  >
-                    {FEE_OPTIONS.map((option) => (
-                      <MenuItem key={option.value} value={option.value}>
-                        {option.label}
-                        {option.value === "CUSTOM" ? "" : ` - Rs ${option.value}`}
-                      </MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
-              )}
-
-              {!isFreeFlow && feeOption === "CUSTOM" ? (
-                <TextField
-                  inputRef={feeInputRef}
-                  label="Custom Amount"
-                  type="number"
-                  size="small"
-                  value={customFee}
-                  onChange={(event) => setCustomFee(event.target.value)}
-                  slotProps={{
-                    input: {
-                      startAdornment: <InputAdornment position="start">Rs</InputAdornment>,
-                    },
-                  }}
-                />
-              ) : null}
-
-              {isFreeFlow ? (
-                <Alert severity="info">Payment mode is not required for free follow-up.</Alert>
+              {/* Fee Display */}
+              <Typography variant="h6" fontWeight={600}>
+                Effective Fee: {fee === 0 ? "FREE" : `₹${fee}`}
+              </Typography>
+              {/* Payment Section */}
+              {fee === 0 ? (
+                <Alert severity="info">No payment required for follow-up</Alert>
               ) : (
                 <FormControl>
                   <FormLabel sx={{ fontSize: "0.8rem", mb: 0.5 }}>Payment Mode</FormLabel>
@@ -611,18 +476,18 @@ export default function ConsultationPage() {
                   </RadioGroup>
                 </FormControl>
               )}
-
               {isSuperAdmin && !selectedStore?.id ? (
                 <Alert severity="warning">Select a store in the top bar before saving.</Alert>
               ) : null}
-
               <Button
                 variant="contained"
-                disabled={!canSubmit}
+                disabled={
+                  !selectedCustomer || !consultationType || saving || (fee > 0 && !paymentMode)
+                }
                 onClick={handleSubmit}
                 startIcon={saving ? <CircularProgress size={16} color="inherit" /> : null}
               >
-                {saving ? "Saving..." : "Collect Fee & Save"}
+                {saving ? "Saving..." : fee === 0 ? "Save Consultation" : "Collect Fee & Save"}
               </Button>
             </Stack>
           </CardContent>
@@ -664,17 +529,14 @@ export default function ConsultationPage() {
                   <TableRow>
                     <TableCell sx={{ fontWeight: 600 }}>Date</TableCell>
                     <TableCell sx={{ fontWeight: 600 }}>Customer</TableCell>
-                    <TableCell sx={{ fontWeight: 600 }}>Visit Type</TableCell>
                     <TableCell sx={{ fontWeight: 600 }}>Fee</TableCell>
                     <TableCell sx={{ fontWeight: 600 }}>Payment Mode</TableCell>
-                    <TableCell sx={{ fontWeight: 600 }}>Payment Status</TableCell>
-                    <TableCell sx={{ fontWeight: 600 }}>Follow-up Tag</TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
                   {filteredConsultations.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={7} align="center" sx={{ color: "text.secondary", py: 3 }}>
+                      <TableCell colSpan={4} align="center" sx={{ color: "text.secondary", py: 3 }}>
                         No consultations found
                       </TableCell>
                     </TableRow>
@@ -683,17 +545,8 @@ export default function ConsultationPage() {
                       <TableRow key={row.id} hover>
                         <TableCell>{formatDate(row.consultationDate)}</TableCell>
                         <TableCell>{row.customerName}</TableCell>
-                        <TableCell>{row.visitType}</TableCell>
-                        <TableCell>Rs {row.consultationFee ?? 0}</TableCell>
-                        <TableCell>{row.paymentMode || "-"}</TableCell>
-                        <TableCell>{row.paymentStatus || "-"}</TableCell>
-                        <TableCell>
-                          {row.isFreeFollowup ? (
-                            <Chip size="small" color="success" label="Free Follow-up" />
-                          ) : (
-                            <Chip size="small" color="default" label="Paid" />
-                          )}
-                        </TableCell>
+                        <TableCell>Rs {row.consultationFee}</TableCell>
+                        <TableCell>{row.paymentMode}</TableCell>
                       </TableRow>
                     ))
                   )}
